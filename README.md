@@ -1,4 +1,4 @@
-# Témoin — ball tracking POC
+# Ball tracking POC
 
 First building block of the **Témoin** project: track a ball in real time, by
 its colour, **without any AI**. Computer vision and arithmetic only, so the
