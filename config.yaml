@@ -1,0 +1,41 @@
+capture:
+  device_index: 0
+  width: 1280
+  height: 720
+  fps: 30
+  warmup_frames: 5
+  record_fourcc: mp4v
+
+detection:
+  processing_width: 640
+  blur_ksize: 5
+  open_ksize: 5
+  close_ksize: 9
+  hsv_ranges:
+  - lower: [85, 60, 40]
+    upper: [115, 255, 255]
+  min_area: 150
+  max_area: 120000
+  min_circularity: 0.6
+  score_weights:
+    area: 0.3
+    circularity: 0.3
+    distance: 0.4
+
+tracking:
+  process_noise: 0.03
+  measurement_noise: 0.1
+  max_missed_frames: 8
+  history_length: 64
+  derivative_window: 5
+
+visualization:
+  trail_length: 32
+  velocity_scale: 0.15
+  fps_window: 30
+  show_mask_on_start: false
+  ball_color: [0, 255, 255]
+  predicted_color: [0, 140, 255]
+  trail_color: [0, 200, 255]
+  velocity_color: [0, 0, 255]
+  hud_color: [255, 255, 255]

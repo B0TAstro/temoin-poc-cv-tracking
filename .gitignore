@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Recorded samples are heavy, keep them local
+data/samples/*.mov
+data/samples/*.mp4
+data/samples/*.avi
+data/samples/*.png
+
+.DS_Store
