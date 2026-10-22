@@ -29,6 +29,11 @@ from temoin_cv.visualization import draw_hud, mask_to_bgr
 
 WINDOW = "Témoin — calibrage"
 DEFAULT_CONFIG = "ball.yaml"
+
+# Area and circularity filter the ball's blob; a court rectangle has no use for
+# them, so court.yaml leaves them out and they fall back to these.
+BALL_KEYS = ("min_area", "max_area", "min_circularity")
+BALL_DEFAULTS = {"min_area": 150, "max_area": 120_000, "min_circularity": 0.6}
 AREA_STEP = 1000  # the max-area slider counts in thousands of pixels
 
 
@@ -89,9 +94,13 @@ def initial_values(config: dict) -> dict[str, int]:
         "blur": int(detection["blur_ksize"]),
         "open": int(detection["open_ksize"]),
         "close": int(detection["close_ksize"]),
-        "min_area": int(detection["min_area"]),
-        "max_area": int(detection["max_area"]) // AREA_STEP,
-        "min_circularity": int(float(detection["min_circularity"]) * 100),
+        "min_area": int(detection.get("min_area", BALL_DEFAULTS["min_area"])),
+        "max_area": int(detection.get("max_area", BALL_DEFAULTS["max_area"]))
+        // AREA_STEP,
+        "min_circularity": int(
+            float(detection.get("min_circularity", BALL_DEFAULTS["min_circularity"]))
+            * 100
+        ),
     }
 
 
@@ -132,15 +141,29 @@ def apply_to_config(config: dict, values: dict[str, int]) -> None:
     detection["blur_ksize"] = values["blur"]
     detection["open_ksize"] = values["open"]
     detection["close_ksize"] = values["close"]
-    detection["min_area"] = values["min_area"]
-    detection["max_area"] = values["max_area"] * AREA_STEP
-    detection["min_circularity"] = values["min_circularity"] / 100.0
+    # Only write the ball filters back into a config that already had them, so
+    # tuning the court's white does not sprinkle meaningless keys into it.
+    if all(key in detection for key in BALL_KEYS):
+        detection["min_area"] = values["min_area"]
+        detection["max_area"] = values["max_area"] * AREA_STEP
+        detection["min_circularity"] = values["min_circularity"] / 100.0
+
+
+def largest_shape_area(mask: np.ndarray) -> float:
+    """Area of the biggest blob, whatever its shape.
+
+    Unlike the ball candidate count, this says something for a court rectangle
+    too, so it is the readout that works for both configs.
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return max((float(cv2.contourArea(contour)) for contour in contours), default=0.0)
 
 
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
     processing_width = int(config["detection"]["processing_width"])
+    tunes_ball = all(key in config["detection"] for key in BALL_KEYS)
 
     if len(config["detection"]["hsv_ranges"]) > 1:
         print("Note : seule la première plage HSV est réglée ici.")
@@ -177,17 +200,17 @@ def main() -> int:
                 values["min_circularity"] / 100.0,
             )
 
-            biggest = max((candidate.area for candidate in candidates), default=0.0)
+            coverage = float(mask.mean()) / 255.0 * 100.0
+            lines = [
+                f"blanc retenu {coverage:5.1f} %"
+                f"   plus grande forme {largest_shape_area(mask):7.0f} px²",
+            ]
+            if tunes_ball:
+                lines.append(f"{len(candidates)} candidat(s) balle")
+            lines.append("s enregistrer dans la config   q quitter")
+
             preview = np.hstack((small, mask_to_bgr(mask)))
-            draw_hud(
-                preview,
-                [
-                    f"{len(candidates)} candidat(s)"
-                    f"   plus grande surface {biggest:.0f} px²",
-                    "s enregistrer dans la config   q quitter",
-                ],
-                (255, 255, 255),
-            )
+            draw_hud(preview, lines, (255, 255, 255))
             cv2.imshow(WINDOW, preview)
 
             key = cv2.waitKey(key_delay) & 0xFF
