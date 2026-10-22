@@ -1,13 +1,17 @@
-"""HSV threshold tuning tool.
+"""HSV threshold tuning tool, shared by every POC.
 
 Shows the frame next to its mask with live sliders. Press `s` to write the
-values back into config.yaml, `q` to quit without saving.
+values back into the config file, `q` to quit without saving.
+
+White court lines are an ordinary HSV range (any hue, low saturation, high
+value), so the same tool tunes configs/court.yaml as well as configs/ball.yaml.
 
 Code and comments are in English; the sliders and the on-screen text are in
 French, since that is the user-facing surface.
 
-    python src/calibrate.py
-    python src/calibrate.py --source data/samples/test.mov
+    python -m apps.calibrate_hsv
+    python -m apps.calibrate_hsv --config configs/court.yaml
+    python -m apps.calibrate_hsv --source data/samples/test.mov
 """
 from __future__ import annotations
 
@@ -17,12 +21,14 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-from capture import VideoSource
-from config import load_config, save_config
-from detection import build_mask, find_candidates, resize_for_processing
-from visualization import draw_hud, mask_to_bgr
+from temoin_cv.ball_detection import find_candidates
+from temoin_cv.capture import VideoSource
+from temoin_cv.config import config_path, load_config, save_config
+from temoin_cv.masking import build_mask, resize_for_processing
+from temoin_cv.visualization import draw_hud, mask_to_bgr
 
 WINDOW = "Témoin — calibrage"
+DEFAULT_CONFIG = "ball.yaml"
 AREA_STEP = 1000  # the max-area slider counts in thousands of pixels
 
 
@@ -56,7 +62,9 @@ def parse_args() -> argparse.Namespace:
         "--source", default=None, help="Vidéo à utiliser au lieu de la webcam"
     )
     parser.add_argument(
-        "--config", default=None, help="Chemin du fichier de configuration YAML"
+        "--config",
+        default=str(config_path(DEFAULT_CONFIG)),
+        help="Chemin du fichier de configuration YAML",
     )
     return parser.parse_args()
 
@@ -176,7 +184,7 @@ def main() -> int:
                 [
                     f"{len(candidates)} candidat(s)"
                     f"   plus grande surface {biggest:.0f} px²",
-                    "s enregistrer dans config.yaml   q quitter",
+                    "s enregistrer dans la config   q quitter",
                 ],
                 (255, 255, 255),
             )

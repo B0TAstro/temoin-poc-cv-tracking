@@ -11,19 +11,23 @@ import cv2
 import numpy as np
 import pytest
 
-from detection import (
+from temoin_cv.ball_detection import (
     Candidate,
     ScoreWeights,
-    build_mask,
     circularity,
     find_candidates,
-    resize_for_processing,
     scale_candidate,
     select_best,
 )
-from tracking import BallTracker, TrackerState, finite_difference, linear_slope
+from temoin_cv.masking import build_mask, resize_for_processing
+from temoin_cv.tracking import (
+    BallTracker,
+    TrackerState,
+    finite_difference,
+    linear_slope,
+)
 
-# Matches the blue ball of config.yaml; BGR (190, 150, 70) lands on H=100.
+# Matches the blue ball of configs/ball.yaml; BGR (190, 150, 70) lands on H=100.
 BLUE_RANGE = [
     (np.array([85, 60, 40], dtype=np.uint8), np.array([115, 255, 255], dtype=np.uint8))
 ]

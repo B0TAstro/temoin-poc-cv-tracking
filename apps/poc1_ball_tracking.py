@@ -3,9 +3,9 @@
 Code and comments are in English; everything shown on screen or printed to the
 terminal is in French, since that is the user-facing surface.
 
-    python src/main.py                                  # webcam
-    python src/main.py --source data/samples/test.mov   # replay a recording
-    python src/main.py --record data/samples/test.mov   # webcam + save raw frames
+    python -m apps.poc1_ball_tracking
+    python -m apps.poc1_ball_tracking --source data/samples/test.mov
+    python -m apps.poc1_ball_tracking --record data/samples/test.mov
 """
 from __future__ import annotations
 
@@ -13,24 +13,29 @@ import argparse
 import math
 import time
 from collections import deque
-from pathlib import Path
 
 import cv2
 
-from capture import FrameRecorder, VideoSource
-from config import load_config, parse_hsv_ranges
-from detection import (
+from temoin_cv.ball_detection import (
     ScoreWeights,
-    build_mask,
     find_candidates,
-    resize_for_processing,
     scale_candidate,
     select_best,
 )
-from tracking import BallTracker, TrackerState
-from visualization import draw_ball, draw_hud, draw_trail, draw_velocity_vector, mask_to_bgr
+from temoin_cv.capture import FrameRecorder, VideoSource
+from temoin_cv.config import DATA_DIR, config_path, load_config, parse_hsv_ranges
+from temoin_cv.masking import build_mask, resize_for_processing
+from temoin_cv.tracking import BallTracker, TrackerState
+from temoin_cv.visualization import (
+    draw_ball,
+    draw_hud,
+    draw_trail,
+    draw_velocity_vector,
+    mask_to_bgr,
+)
 
-SNAPSHOT_DIR = Path(__file__).resolve().parent.parent / "data" / "samples"
+SNAPSHOT_DIR = DATA_DIR / "samples"
+DEFAULT_CONFIG = "ball.yaml"
 
 # -- user-facing strings, in French -------------------------------------------
 
@@ -58,10 +63,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source",
         default=None,
-        help="Vidéo à rejouer. Par défaut, la webcam définie dans config.yaml.",
+        help="Vidéo à rejouer. Par défaut, la webcam définie dans la config.",
     )
     parser.add_argument(
-        "--config", default=None, help="Chemin du fichier de configuration YAML."
+        "--config",
+        default=str(config_path(DEFAULT_CONFIG)),
+        help="Chemin du fichier de configuration YAML.",
     )
     parser.add_argument(
         "--record",
