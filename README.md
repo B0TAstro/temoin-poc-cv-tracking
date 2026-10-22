@@ -6,49 +6,30 @@ algorithm can later run on an iPhone.
 
 This POC answers a single question: is the resulting trajectory clean enough to
 derive bounces from it? The vertical velocity shown on screen flips sign on every
-impact — exactly the signal the next POC will rely on.
-
-> Code, comments and documentation are in English. Everything displayed on screen
-> or printed to the terminal is in French: that is the user-facing surface.
+impact.
 
 ## Install
-
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-On macOS the terminal needs camera access:
-**System Settings > Privacy & Security > Camera**. Without it, opening the
-webcam fails with an explicit message.
-
 ## Usage
-
 ```bash
 # 1. tune the colour thresholds on the ball, under the room's own light
 python src/calibrate.py
-
 # 2. track the ball from the webcam
 python src/main.py
-
 # 3. record a run so it can be replayed unchanged
 python src/main.py --record data/samples/test.mov
-
 # 4. replay that run after changing the thresholds
 python src/main.py --source data/samples/test.mov
-
 # the tests covering the pure functions
 pytest tests/ -q
 ```
 
-`--record` saves the **raw frames**, without the overlay. That is what makes it
-possible to push the same sequence back through the detection with different
-settings and compare two configurations on identical frames, instead of comparing
-two different throws.
-
 ## Calibration
-
 1. Run `python src/calibrate.py` with the ball in frame.
 2. Raise **saturation min** until the background (white wall, floor) turns black.
    This is the most effective setting by far: white has almost no saturation.
@@ -79,7 +60,6 @@ is contour area and `circularité` is circularity.
 | `s` | screenshot into `data/samples/` | save to `config.yaml` |
 
 ## What is displayed
-
 - a circle around the ball — **yellow** when it is detected, **orange** when the
   position comes from the filter's prediction
 - the trail of recent positions, fading with age
@@ -166,8 +146,3 @@ clip, processing at 640 px:
 
 If the real webcam drops below 30 FPS, lowering `processing_width` in
 `config.yaml` is enough — no code change.
-
-## Out of scope
-
-No bounce detection on screen, no court lines or homography, no sound, no second
-camera, and **no AI library** — that is a project constraint, not a preference.
