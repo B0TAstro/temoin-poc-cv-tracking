@@ -51,14 +51,16 @@ from temoin_cv.visualization import (
 SNAPSHOT_DIR = DATA_DIR / "samples"
 DEFAULT_CONFIG = "court.yaml"
 CORNERS_NEEDED = 4
-# Keep the top-down window clear of the main window's banner.
-TOP_WINDOW_Y = 780
+# Keep the top-down window clear of the main window's banner. It is positioned
+# on its first imshow: moveWindow does nothing to a window with no content yet,
+# which is how it kept landing back on the banner.
+TOP_WINDOW_Y = 760
 
 # -- user-facing strings, in French -------------------------------------------
 
-WINDOW_MAIN = "Témoin — court"
-WINDOW_TOP = "Témoin — vue de dessus"
-WINDOW_MASK = "Témoin — masque du blanc"
+WINDOW_MAIN = "Temoin - court"
+WINDOW_TOP = "Temoin - vue de dessus"
+WINDOW_MASK = "Temoin - masque du blanc"
 KEY_HINTS = "m masque   c calibrer   o orientation   r réinit.   l verrouiller   q quitter"
 
 # French labels for the model's English point and line names.
@@ -195,6 +197,17 @@ def on_mouse(event: int, x: int, y: int, _flags: int, state: AppState) -> None:
 
     if state.mode is Mode.MANUAL:
         state.manual_points.append((float(x), float(y)))
+        index = len(state.manual_points)
+        if index <= CORNERS_NEEDED:
+            name = (
+                state.reference_names[index - 1]
+                if index <= len(state.reference_names)
+                else "?"
+            )
+            print(
+                f"Point {index}/{CORNERS_NEEDED} pris en ({x}, {y}) :"
+                f" {POINT_LABELS.get(name, name)}"
+            )
         return
 
     state.probe_px = (float(x), float(y))
@@ -308,8 +321,7 @@ def main() -> int:
     # squarely on the banner that says which method fired and how stable the
     # corners are — the one thing needed to tell a good fit from a bad one.
     cv2.moveWindow(WINDOW_MAIN, 0, 0)
-    cv2.namedWindow(WINDOW_TOP)
-    cv2.moveWindow(WINDOW_TOP, 0, TOP_WINDOW_Y)
+    top_window_placed = False
 
     with VideoSource.from_config(config, args.source) as source:
         recorder = (
@@ -464,6 +476,9 @@ def main() -> int:
                 cv2.imshow(WINDOW_MAIN, frame)
                 if top_down is not None:
                     cv2.imshow(WINDOW_TOP, top_down)
+                    if not top_window_placed:
+                        cv2.moveWindow(WINDOW_TOP, 0, TOP_WINDOW_Y)
+                        top_window_placed = True
 
                 if show_mask:
                     cv2.imshow(WINDOW_MASK, mask_to_bgr(mask))

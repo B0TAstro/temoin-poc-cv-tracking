@@ -39,8 +39,8 @@ DEFAULT_CONFIG = "ball.yaml"
 
 # -- user-facing strings, in French -------------------------------------------
 
-WINDOW_MAIN = "Témoin — suivi"
-WINDOW_MASK = "Témoin — masque"
+WINDOW_MAIN = "Temoin - suivi"
+WINDOW_MASK = "Temoin - masque"
 KEY_HINTS = "q quitter   m masque   p pause   s capture"
 
 STATE_LABELS = {

@@ -127,6 +127,35 @@ away, and because the outer corners are frequently out of frame. `reference_poin
 in the config names which four model points you click, so a camera that only
 sees the service boxes can calibrate on those instead.
 
+**The four reference points have to exist on the floor, and be in frame.** Tape
+that forms an H — two sidelines and one crossing line — has only two
+intersections, so neither detection nor clicking can work with it, whatever the
+config says. Four identifiable corners are the minimum, and a closed rectangle
+somewhere in the taped figure is the easiest way to get them.
+
+Pick the scale from one measurement and let the model place the rest. If the two
+long lines are the singles sidelines and they sit `W` centimetres apart, then
+`scale = W / 823`, and the model puts the two service lines
+`1280 × scale` centimetres apart:
+
+| Gap between the sidelines | `scale` | Second crossing line at | Whole court becomes |
+|---|---|---|---|
+| 100 cm | 0.1215 | 156 cm | 133 × 289 cm |
+| 120 cm | 0.1458 | 187 cm | 160 × 347 cm |
+| 140 cm | 0.1701 | 218 cm | 187 × 404 cm |
+| 160 cm | 0.1944 | 249 cm | 213 × 462 cm |
+
+Then calibrate on the service box, whose corners sit in the middle of the frame
+rather than at its edges:
+
+```yaml
+reference_points:
+- service_far_left
+- service_far_right
+- service_near_right
+- service_near_left
+```
+
 ### The symmetry trap
 
 **This is the one thing to understand before trusting a coordinate.**

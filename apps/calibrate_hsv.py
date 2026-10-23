@@ -27,7 +27,7 @@ from temoin_cv.config import config_path, load_config, save_config
 from temoin_cv.masking import build_mask, resize_for_processing
 from temoin_cv.visualization import draw_hud, mask_to_bgr
 
-WINDOW = "Témoin — calibrage"
+WINDOW = "Temoin - calibrage"
 DEFAULT_CONFIG = "ball.yaml"
 
 # Area and circularity filter the ball's blob; a court rectangle has no use for
