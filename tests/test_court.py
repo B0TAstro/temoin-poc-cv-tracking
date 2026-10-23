@@ -20,7 +20,9 @@ from temoin_cv.court import (
     find_quad_by_hough,
     image_to_court,
     order_corners,
+    quad_support,
     scale_to_pixels,
+    segment_support,
     warp_top_down,
 )
 
@@ -236,3 +238,60 @@ def test_corner_smoother_reset_clears_the_window():
     smoother.update(order_corners(TRAPEZOID))
     smoother.reset()
     assert smoother.jitter == 0.0
+
+
+# -- mask support --------------------------------------------------------------
+
+
+def test_segment_support_is_one_on_the_line_and_zero_off_it():
+    mask = np.zeros((200, 200), dtype=np.uint8)
+    cv2.line(mask, (10, 100), (190, 100), 255, 5)
+
+    assert segment_support(mask, (10, 100), (190, 100)) == pytest.approx(1.0)
+    assert segment_support(mask, (10, 30), (190, 30)) == pytest.approx(0.0)
+
+
+def test_quad_support_is_high_on_the_taped_rectangle():
+    assert quad_support(white_quad_mask(), order_corners(TRAPEZOID)) > 0.9
+
+
+def test_quad_support_is_zero_on_an_unrelated_rectangle():
+    """Four unrelated lines always intersect into a plausible quadrilateral."""
+    elsewhere = [(20.0, 20.0), (120.0, 20.0), (120.0, 90.0), (20.0, 90.0)]
+    assert quad_support(white_quad_mask(), order_corners(elsewhere)) == pytest.approx(0.0)
+
+
+def test_quad_support_is_decided_by_the_weakest_edge():
+    """Three real edges and one invented one is still an invented rectangle."""
+    mask = np.zeros((480, 640), dtype=np.uint8)
+    ordered = order_corners(TRAPEZOID)
+    corners = np.array(ordered, dtype=np.int32)
+    for index in range(3):  # three of the four edges only
+        cv2.line(mask, tuple(corners[index]), tuple(corners[index + 1]), 255, 6)
+
+    # The three drawn edges are fully backed...
+    for index in range(3):
+        assert segment_support(mask, ordered[index], ordered[index + 1]) == pytest.approx(1.0)
+    # ...and the one that was never drawn drags the whole quad down. It is not
+    # exactly zero because the tolerance dilation catches its two endpoints,
+    # which sit on the edges that were drawn.
+    assert quad_support(mask, ordered) < 0.2
+
+
+def test_the_support_gate_rejects_a_quad_the_mask_does_not_back():
+    """The regression that mattered: a confident wrong answer in a white room.
+
+    A colour threshold cannot tell a white wall from white tape, so the mask
+    arrives with the walls in it and Hough intersects wall edges with tape edges
+    into a rectangle that looks entirely plausible. Shape alone cannot reject
+    it; mask support can.
+    """
+    mask = white_quad_mask()
+    mask[:150, :] = 255  # a lit wall across the top
+    mask[:, 500:] = 255  # a bright door down the right side
+
+    unguarded = find_quad_by_hough(mask, HOUGH_PARAMS, 0.02, min_support=0.0)
+    assert unguarded is not None
+    assert quad_support(mask, unguarded) < 0.5  # part tape, part wall
+
+    assert find_quad_by_hough(mask, HOUGH_PARAMS, 0.02, min_support=0.6) is None

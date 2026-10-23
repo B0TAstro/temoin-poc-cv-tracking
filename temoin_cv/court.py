@@ -64,7 +64,10 @@ def order_corners(points: Sequence[Sequence[float]] | np.ndarray) -> Corners:
 
 
 def find_quad_by_contour(
-    mask: np.ndarray, min_area_ratio: float, epsilon_ratio: float
+    mask: np.ndarray,
+    min_area_ratio: float,
+    epsilon_ratio: float,
+    min_support: float = 0.0,
 ) -> Corners | None:
     """Largest convex quadrilateral in the mask, as ordered corners.
 
@@ -90,7 +93,13 @@ def find_quad_by_contour(
 
         best, best_area = approximation, area
 
-    return None if best is None else order_corners(best.reshape(4, 2))
+    if best is None:
+        return None
+
+    corners = order_corners(best.reshape(4, 2))
+    if quad_support(mask, corners) < min_support:
+        return None
+    return corners
 
 
 def _fit_line(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -132,7 +141,10 @@ def _split_at_largest_gap(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def find_quad_by_hough(
-    mask: np.ndarray, params: dict[str, Any], min_area_ratio: float = 0.0
+    mask: np.ndarray,
+    params: dict[str, Any],
+    min_area_ratio: float = 0.0,
+    min_support: float = 0.0,
 ) -> Corners | None:
     """Fallback detection: four Hough lines, intersected.
 
@@ -199,7 +211,47 @@ def find_quad_by_hough(
     area = float(cv2.contourArea(ordered.reshape(-1, 1, 2)))
     if area < min_area_ratio * mask.shape[0] * mask.shape[1]:
         return None
+    if quad_support(mask, ordered) < min_support:
+        return None
     return ordered
+
+
+def segment_support(
+    mask: np.ndarray,
+    start: Sequence[float],
+    end: Sequence[float],
+    samples: int = 64,
+) -> float:
+    """Share of a segment that actually lies on mask pixels, from 0 to 1."""
+    xs = np.linspace(float(start[0]), float(end[0]), samples)
+    ys = np.linspace(float(start[1]), float(end[1]), samples)
+    height, width = mask.shape[:2]
+    columns = np.clip(np.round(xs).astype(int), 0, width - 1)
+    rows = np.clip(np.round(ys).astype(int), 0, height - 1)
+    return float(np.count_nonzero(mask[rows, columns]) / samples)
+
+
+def quad_support(mask: np.ndarray, corners: Corners, tolerance: int = 3) -> float:
+    """Support of the WEAKEST of the four edges.
+
+    Four lines can always be intersected into a quadrilateral, so a detector
+    that only checks shape will happily report one made of unrelated edges —
+    a door frame and a skirting board will do. This asks the only question
+    that matters: is each of those four edges actually drawn on the floor?
+    The weakest edge decides, because three good edges and one invented one
+    is still an invented rectangle.
+    """
+    if tolerance > 0:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (2 * tolerance + 1, 2 * tolerance + 1)
+        )
+        mask = cv2.dilate(mask, kernel)
+
+    points = np.asarray(corners, dtype=float)
+    return min(
+        segment_support(mask, points[index], points[(index + 1) % 4])
+        for index in range(4)
+    )
 
 
 def court_corners_cm(width_cm: float, height_cm: float) -> Corners:

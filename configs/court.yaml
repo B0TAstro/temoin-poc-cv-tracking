@@ -14,12 +14,13 @@ detection:
   hsv_ranges:
   - lower: [0, 0, 180]
     upper: [179, 60, 255]
-  tophat_ksize: 0
+  tophat_ksize: 21
 
 quad:
   method: contour
   min_area_ratio: 0.02
   epsilon_ratio: 0.02
+  min_support: 0.6
   hough:
     canny_low: 50
     canny_high: 150
