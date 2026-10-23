@@ -22,7 +22,6 @@ from temoin_cv.config import DATA_DIR, config_path, load_config, parse_hsv_range
 from temoin_cv.court import (
     CornerSmoother,
     compute_homography,
-    court_corners_cm,
     enhance_lines,
     find_quad_by_contour,
     find_quad_by_hough,
@@ -30,9 +29,18 @@ from temoin_cv.court import (
     order_corners,
     warp_top_down,
 )
+from temoin_cv.court_model import (
+    model_from_config,
+    overall_score,
+    project_model,
+    reference_corners,
+    score_lines,
+    symmetric_orders,
+)
 from temoin_cv.masking import build_mask, resize_for_processing
 from temoin_cv.visualization import (
     draw_corners,
+    draw_court_lines,
     draw_court_marker,
     draw_grid,
     draw_hud,
@@ -51,9 +59,40 @@ TOP_WINDOW_Y = 780
 WINDOW_MAIN = "Témoin — court"
 WINDOW_TOP = "Témoin — vue de dessus"
 WINDOW_MASK = "Témoin — masque du blanc"
-KEY_HINTS = "m masque   c calibrer   r réinitialiser   l verrouiller   q quitter"
+KEY_HINTS = "m masque   c calibrer   o orientation   r réinit.   l verrouiller   q quitter"
 
-CORNER_NAMES = ("haut-gauche", "haut-droite", "bas-droite", "bas-gauche")
+# French labels for the model's English point and line names.
+POINT_LABELS = {
+    "doubles_near_left": "fond proche, couloir gauche",
+    "doubles_near_right": "fond proche, couloir droit",
+    "doubles_far_right": "fond opposé, couloir droit",
+    "doubles_far_left": "fond opposé, couloir gauche",
+    "singles_near_left": "fond proche, simple gauche",
+    "singles_near_right": "fond proche, simple droit",
+    "singles_far_left": "fond opposé, simple gauche",
+    "singles_far_right": "fond opposé, simple droit",
+    "service_near_left": "service proche, gauche",
+    "service_near_right": "service proche, droit",
+    "service_far_left": "service opposé, gauche",
+    "service_far_right": "service opposé, droit",
+    "centre_near": "médiane, côté proche",
+    "centre_far": "médiane, côté opposé",
+    "net_left": "filet, gauche",
+    "net_right": "filet, droit",
+}
+
+LINE_LABELS = {
+    "baseline_near": "fond proche",
+    "baseline_far": "fond opposé",
+    "sideline_doubles_left": "couloir gauche",
+    "sideline_doubles_right": "couloir droit",
+    "sideline_singles_left": "simple gauche",
+    "sideline_singles_right": "simple droit",
+    "service_line_near": "service proche",
+    "service_line_far": "service opposé",
+    "centre_service_line": "ligne médiane",
+    "net_line": "filet",
+}
 
 
 class Mode(enum.Enum):
@@ -85,6 +124,9 @@ class AppState:
         self.method = "contour"
         self.probe_cm: tuple[float, float] | None = None
         self.probe_px: tuple[float, float] | None = None
+        self.scored: dict[str, float] = {}
+        self.reference_names: tuple[str, ...] = ()
+        self.orientation = 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -165,28 +207,48 @@ def build_hud_lines(
     processing_width: int,
     jitter: float,
     court_size_cm: tuple[float, float],
+    good: float,
 ) -> list[str]:
     lines = [
         f"FPS {fps:5.1f}   {source.width}x{source.height} -> {processing_width}px"
-        f"   rectangle {court_size_cm[0]:.0f} x {court_size_cm[1]:.0f} cm",
+        f"   court {court_size_cm[0]:.0f} x {court_size_cm[1]:.0f} cm",
     ]
 
     if state.mode is Mode.MANUAL:
         index = len(state.manual_points)
         if index < CORNERS_NEEDED:
+            point_name = state.reference_names[index]
+            label = POINT_LABELS.get(point_name, point_name)
             lines.append(
                 f"ÉTAT {MODE_LABELS[state.mode]}"
-                f"   cliquer le coin {index + 1}/4 : {CORNER_NAMES[index]}"
+                f"   cliquer le point {index + 1}/4 : {label}"
             )
         else:
-            lines.append(f"ÉTAT {MODE_LABELS[state.mode]}   coins complets")
+            lines.append(f"ÉTAT {MODE_LABELS[state.mode]}   points complets")
     else:
         detail = (
             METHOD_LABELS.get(state.method, state.method)
             if state.corners is not None
-            else "rectangle non trouvé"
+            else "court non trouvé"
         )
         lines.append(f"ÉTAT {MODE_LABELS[state.mode]}   {detail}")
+
+    if state.scored:
+        seen = sum(1 for value in state.scored.values() if value >= good)
+        worst_name = min(state.scored, key=state.scored.get)
+        worst_label = LINE_LABELS.get(worst_name, worst_name)
+        lines.append(
+            f"lignes confirmées {seen}/{len(state.scored)}"
+            f"   score {overall_score(state.scored):.2f}"
+            f"   plus faible : {worst_label} {state.scored[worst_name]:.2f}"
+        )
+
+    if state.corners is not None:
+        first = state.reference_names[0] if state.reference_names else "?"
+        lines.append(
+            f"orientation {state.orientation + 1}/4"
+            f"   point 1 = {POINT_LABELS.get(first, first)}"
+        )
 
     if state.corners is not None and state.mode is Mode.AUTO:
         lines.append(f"stabilité des coins {jitter:5.2f} px")
@@ -213,15 +275,28 @@ def main() -> int:
     processing_width = int(detection_config["processing_width"])
     tophat_ksize = int(detection_config.get("tophat_ksize", 0))
 
-    width_cm = float(court_config["width_cm"])
-    height_cm = float(court_config["height_cm"])
     px_per_cm = float(court_config["px_per_cm"])
     grid_step_cm = float(court_config["grid_step_cm"])
-    court_corners = court_corners_cm(width_cm, height_cm)
+
+    model = model_from_config(court_config)
+    reference_names = tuple(court_config["reference_points"])
+    orientations = symmetric_orders(reference_names)
+    width_cm = model.doubles_width_cm
+    height_cm = model.length_cm
+
+    scoring = config["scoring"]
+    good_score = float(scoring["good"])
+    partial_score = float(scoring["partial"])
+    line_colors = {
+        "good": tuple(view_config["line_good_color"]),
+        "partial": tuple(view_config["line_partial_color"]),
+        "missing": tuple(view_config["line_missing_color"]),
+    }
 
     cv2.setUseOptimized(True)
 
     state = AppState()
+    state.reference_names = reference_names
     smoother = CornerSmoother(int(config["smoothing"]["corner_window"]))
     durations: deque[float] = deque(maxlen=int(view_config["fps_window"]))
     show_mask = bool(view_config["show_mask_on_start"])
@@ -297,11 +372,23 @@ def main() -> int:
                         state.corners = None
                         smoother.reset()
 
+                court_corners = reference_corners(
+                    model, orientations[state.orientation]
+                )
                 matrix = (
                     compute_homography(state.corners, court_corners)
                     if state.corners is not None
                     else None
                 )
+
+                if matrix is not None:
+                    projected = project_model(model, matrix)
+                    # The mask lives in the processing frame; the projection is
+                    # in display pixels, hence the scale.
+                    state.scored = score_lines(projected, mask, scale)
+                else:
+                    projected = {}
+                    state.scored = {}
 
                 if state.probe_px is not None and matrix is not None:
                     state.probe_cm = image_to_court(state.probe_px, matrix)
@@ -336,6 +423,15 @@ def main() -> int:
                     Mode.LOCKED: "locked_color",
                 }[state.mode]
 
+                if projected:
+                    draw_court_lines(
+                        frame,
+                        projected,
+                        state.scored,
+                        line_colors,
+                        good_score,
+                        partial_score,
+                    )
                 if state.corners is not None:
                     draw_quad(frame, state.corners, tuple(view_config[color_key]))
                     draw_corners(
@@ -361,6 +457,7 @@ def main() -> int:
                         processing_width,
                         smoother.jitter,
                         (width_cm, height_cm),
+                        good_score,
                     ),
                     tuple(view_config["hud_color"]),
                 )
@@ -401,6 +498,14 @@ def main() -> int:
                         "Coins verrouillés."
                         if state.mode is Mode.LOCKED
                         else "Coins déverrouillés."
+                    )
+                if key == ord("o"):
+                    state.orientation = (state.orientation + 1) % len(orientations)
+                    state.reference_names = orientations[state.orientation]
+                    first = state.reference_names[0]
+                    print(
+                        f"Orientation {state.orientation + 1}/{len(orientations)} :"
+                        f" le point 1 est « {POINT_LABELS.get(first, first)} »"
                     )
                 if key == ord("s"):
                     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)

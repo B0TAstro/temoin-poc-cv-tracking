@@ -29,10 +29,22 @@ quad:
     max_line_gap: 40
 
 court:
-  width_cm: 200
-  height_cm: 100
+  length_cm: 2377
+  doubles_width_cm: 1097
+  singles_width_cm: 823
+  service_line_from_net_cm: 640
+  scale: 0.15
+  reference_points:
+  - doubles_far_left
+  - doubles_far_right
+  - doubles_near_right
+  - doubles_near_left
   px_per_cm: 2
   grid_step_cm: 10
+
+scoring:
+  good: 0.7
+  partial: 0.3
 
 smoothing:
   corner_window: 5
@@ -47,3 +59,6 @@ visualization:
   grid_color: [90, 90, 90]
   marker_color: [0, 0, 255]
   hud_color: [255, 255, 255]
+  line_good_color: [0, 255, 0]
+  line_partial_color: [0, 170, 255]
+  line_missing_color: [120, 120, 120]

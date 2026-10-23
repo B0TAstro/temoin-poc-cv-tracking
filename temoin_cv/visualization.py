@@ -166,3 +166,42 @@ def draw_court_marker(
     y = int(round(point_cm[1] * px_per_cm))
     cv2.drawMarker(view, (x, y), color, cv2.MARKER_CROSS, 16, 2, cv2.LINE_AA)
     return view
+
+
+COORD_LIMIT = 10_000
+
+
+def _clamped(point: tuple[float, float]) -> tuple[int, int]:
+    """Keep a projected point drawable: a near-degenerate homography can send
+    a line millions of pixels away, which OpenCV will not draw."""
+    return (
+        int(round(max(-COORD_LIMIT, min(COORD_LIMIT, point[0])))),
+        int(round(max(-COORD_LIMIT, min(COORD_LIMIT, point[1])))),
+    )
+
+
+def draw_court_lines(
+    frame: np.ndarray,
+    projected: dict[str, tuple[tuple[float, float], tuple[float, float]]],
+    scored: dict[str, float],
+    colors: dict[str, Color],
+    good: float,
+    partial: float,
+    thickness: int = 2,
+) -> np.ndarray:
+    """Every model line, coloured by how much of it the mask actually backs.
+
+    Colour is the confidence made visible: a line drawn grey is one the
+    homography claims is there and the image does not confirm.
+    """
+    for name, (start, end) in projected.items():
+        score = scored.get(name, 0.0)
+        if score >= good:
+            color = colors["good"]
+        elif score >= partial:
+            color = colors["partial"]
+        else:
+            color = colors["missing"]
+        cv2.line(frame, _clamped(start), _clamped(end), color, thickness, cv2.LINE_AA)
+
+    return frame
