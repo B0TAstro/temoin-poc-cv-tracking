@@ -43,6 +43,8 @@ from temoin_cv.visualization import (
 SNAPSHOT_DIR = DATA_DIR / "samples"
 DEFAULT_CONFIG = "court.yaml"
 CORNERS_NEEDED = 4
+# Keep the top-down window clear of the main window's banner.
+TOP_WINDOW_Y = 780
 
 # -- user-facing strings, in French -------------------------------------------
 
@@ -123,16 +125,25 @@ def detect_quad(
     never closes into a quadrilateral, but it still votes for the right line.
     """
     min_area_ratio = float(quad_config["min_area_ratio"])
+    min_support = float(quad_config.get("min_support", 0.0))
 
     if str(quad_config["method"]) == "hough":
-        return find_quad_by_hough(mask, quad_config["hough"], min_area_ratio), "hough"
+        return (
+            find_quad_by_hough(
+                mask, quad_config["hough"], min_area_ratio, min_support
+            ),
+            "hough",
+        )
 
     found = find_quad_by_contour(
-        mask, min_area_ratio, float(quad_config["epsilon_ratio"])
+        mask, min_area_ratio, float(quad_config["epsilon_ratio"]), min_support
     )
     if found is not None:
         return found, "contour"
-    return find_quad_by_hough(mask, quad_config["hough"], min_area_ratio), "hough"
+    return (
+        find_quad_by_hough(mask, quad_config["hough"], min_area_ratio, min_support),
+        "hough",
+    )
 
 
 def on_mouse(event: int, x: int, y: int, _flags: int, state: AppState) -> None:
@@ -217,6 +228,13 @@ def main() -> int:
 
     cv2.namedWindow(WINDOW_MAIN)
     cv2.setMouseCallback(WINDOW_MAIN, on_mouse, state)
+
+    # Both windows otherwise open at the top left, and the top-down view lands
+    # squarely on the banner that says which method fired and how stable the
+    # corners are — the one thing needed to tell a good fit from a bad one.
+    cv2.moveWindow(WINDOW_MAIN, 0, 0)
+    cv2.namedWindow(WINDOW_TOP)
+    cv2.moveWindow(WINDOW_TOP, 0, TOP_WINDOW_Y)
 
     with VideoSource.from_config(config, args.source) as source:
         recorder = (
