@@ -17,7 +17,7 @@ trajectory derivatives), so that it runs fast on an iPhone.
 | POC | Goal | Status |
 | --- | --- | --- |
 | **POC 1 · ball tracking** | Detect a ball by its colour on the webcam and follow its motion | Done, frozen by the `poc1-ball-tracking` tag |
-| **POC 2 · court lines** | Detect a rectangle of white lines on the floor and map it back to its real dimensions | **In progress** |
+| **POC 2 · court lines** | Place every court line from four known points, to a few centimetres | **In progress** |
 | POC 3 · bounce in/out | Put the two together: detect the bounce and say whether it was in or out | Upcoming |
 
 ## Repo layout
@@ -39,6 +39,7 @@ temoin-poc-cv-tracking/
 │   ├── ball_detection.py      # contours, centre and radius of the ball (POC 1)
 │   ├── tracking.py            # Kalman filter, history, velocity, acceleration
 │   ├── court.py               # line detection, corners, homography (POC 2)
+│   ├── court_model.py         # the court as named points and lines, in cm (POC 2)
 │   └── visualization.py       # shared drawing functions
 ├── apps/
 │   ├── poc1_ball_tracking.py
@@ -56,95 +57,69 @@ raises `ImportError`, because Python puts the script's own directory on
 
 ### Goal
 
-A Python app that, from the Mac's webcam:
+A court is not one rectangle, it is a network of lines whose dimensions are known
+in advance. The POC exploits exactly that: **four known points are enough**. From
+them comes the homography, and from the homography every remaining line follows
+by projection — already named, which raw line detection could never give.
 
-1. detects a **rectangle of white lines** laid out on the floor (white tape or
-   sheets of paper) standing in for the lines of a court
-2. finds its **four corners**, even seen in perspective, where the rectangle
-   appears as a trapezoid
-3. computes the **homography** between the image and the **real dimensions** of
-   the rectangle, declared in `configs/court.yaml`
-4. displays a rectified **top-down view**
-5. lets you **click a point in the image** to show its real position in
-   centimetres inside the rectangle, to check the accuracy
+From the Mac's webcam the app must:
 
-The question this POC answers is accuracy, not detection: is the error between a
-clicked point and its real position a matter of a few centimetres? If it is, the
-in/out decision of POC 3 is viable.
+1. isolate the **white lines** taped on the floor
+2. obtain **four reference points**, detected automatically or clicked by hand
+3. compute the **homography** to the court model's real centimetres, declared in
+   `configs/court.yaml` as four measurements plus a scale
+4. project and draw **every line of the court**, each scored by how much of it
+   the mask actually backs
+5. let a **click** report a point's real position in centimetres
+
+The question is accuracy, not detection: is a clicked point within a few
+centimetres of its real position? If so, POC 3's in/out decision is viable.
 
 ### Out of scope
 
 - No ball in this POC (putting the two together is POC 3)
 - No bounce, no in or out
-- No real tennis court: a rectangle of known size on the floor is enough
 - **No AI or deep learning library.** A project constraint, not a preference.
 - **No lens distortion correction.** A wide-angle webcam bows straight lines,
   which costs centimetres near the edges of the frame and is invisible to the
-  eye on the overlay. Accepted as a known limitation and recorded in the README;
-  a checkerboard calibration is a later problem.
+  eye on the overlay. Accepted as a known limitation, recorded in the README.
 
-### Detection pipeline
+### Non-negotiable findings
 
-1. Blur the frame slightly to cut noise
-2. Isolate **white**: in HSV, low saturation and high value (thresholds in
-   `court.yaml`). White is an ordinary HSV range, so the mask reuses
-   `temoin_cv/masking.py` unchanged. On a light floor, a top-hat transform helps
-   thin lines stand out.
-3. Clean the mask with morphological operations
-4. **Main method**: contours, then `approxPolyDP`, keeping a convex
-   quadrilateral of sufficient area
-5. **Fallback**: `Canny` then `HoughLinesP`, group the segments into two
-   families by angle, fit one line per family, intersect them
-6. **Order the corners** stably (top-left, top-right, bottom-right, bottom-left)
-   by angle around the centroid. Sorting by the sum and difference of the
-   coordinates breaks as soon as the rectangle is seen at an angle, which is
-   exactly the case here.
-7. Smooth the corners over time (rolling mean) so they stop shaking frame to
-   frame
+These were measured, not assumed. Do not undo them.
 
-### Manual calibration
-
-The lines of an amateur court are often worn away, so it must always be possible
-to **click the four corners by hand** (key `c`), in the order shown on screen.
-Manual calibration replaces automatic detection until it is reset (key `r`).
-
-### Homography
-
-- Source points: the four corners in the image
-- Destination points: the corners of the real rectangle, in centimetres, from
-  `court.yaml`
-- `cv2.getPerspectiveTransform` for the matrix, `cv2.perspectiveTransform` to
-  project a point, `cv2.warpPerspective` for the top-down view
-- Pure functions in `temoin_cv/court.py`: `image_to_court(point, matrix)` and
-  `court_to_image(point, matrix)`, reused as they are in POC 3
-
-**Reprojection error is not a quality indicator here.** With exactly four points
-`getPerspectiveTransform` is an exact fit, so the error is always about zero and
-measures nothing. The indicator to display is the **temporal stability of the
-corners**, their standard deviation in pixels over the smoothing window, which
-will also feed the confidence score of POC 3.
+- **The court's symmetry cannot be resolved from the image.** A tennis court is
+  symmetric about the net and along its length, so four corner assignments map
+  it onto itself. All four project every line onto the tape and score a perfect
+  1.00, and three of them are out by most of the length of the court. Never use
+  the score to choose the orientation; `reference_points` declares it, the `o`
+  key cycles it, and only a click on a measured point can confirm it.
+- **A colour threshold cannot tell white tape from a white wall.** In a real
+  room it kept 59% of the frame and merged walls, door and tape into one blob.
+  The top-hat in `enhance_lines` takes that to 4% and must stay enabled: it
+  keeps only what is smaller and brighter than its surroundings, which a wall
+  never is.
+- **A quadrilateral must be backed by the mask.** Four lines can always be
+  intersected into one, so shape alone will report a door frame crossed with a
+  skirting board. `quad_support` checks each edge and the weakest decides.
+- **Reprojection error is not a quality indicator.** With exactly four points
+  `getPerspectiveTransform` is an exact fit, so it is always about zero. Corner
+  stability and the per-line model score are the real ones.
+- **Accuracy falls off towards the far end**, where the court occupies fewer
+  pixels. Measure there, not only at the near baseline.
+- **A validation marker must be flat.** The homography maps the ground plane, so
+  the top of a tall object projects to the wrong place. The same effect is the
+  main accuracy problem waiting in POC 3: the ball's centre sits one radius
+  above the ground at the bounce.
 
 ### Expected display
 
-- The video with the lines and the four corners drawn on top, and an indicator
-  of automatic detection versus manual calibration
-- A second window with the rectified **top-down view** and a grid every 10 cm
-- Clicking the image shows its real position in centimetres and marks it on the
-  top-down view
-- Key `m` for the white mask, `c` to calibrate by hand, `r` to reset, `l` to
-  lock the corners, `q` to quit
-
-### Validation
-
-- The corners are found stably in under a second, from several viewing angles
-- Clicking a point whose real position is known gives an error of **a few
-  centimetres** at most. The marker must be **flat** — a cross of tape, a coin —
-  never a tall object: the top of a tall object projects to the wrong place
-  through a ground-plane homography, and the parallax would be blamed on the
-  homography. The same effect is the main accuracy problem waiting in POC 3,
-  since the ball's centre sits one radius above the ground at the bounce.
-- Record in the README the conditions that defeat the detection: lighting, light
-  floor, too shallow an angle
+- The video with every model line drawn, coloured by its score, the four
+  reference points numbered, and the current mode
+- A second window with the rectified top-down view and a grid every 10 cm
+- A click reports a position in centimetres and marks it on the top-down view
+- Keys: `m` white mask, `c` manual calibration, `o` cycle orientation,
+  `r` reset, `l` lock the corners, `q` quit
 
 ## Stack
 
@@ -187,9 +162,15 @@ On macOS the terminal needs camera access: System Settings > Privacy & Security
 
 ## Planned next steps
 
-1. **POC 3**: project the ball's position onto the rectangle at the moment of
+1. **Finish POC 2**: find the four reference points automatically among the
+   candidate lines, instead of relying on a closed quadrilateral or a click.
+   Detect line pixels structurally rather than by colour — bright with darker
+   pixels on both sides, which a wall is not — run Hough over them, then search
+   the correspondences and keep the homography that scores best. `segment_support`
+   is already that scoring function.
+2. **POC 3**: project the ball's position onto the court at the moment of
    the bounce, detect the bounce from the trajectory's derivatives and the sound
    peak of the impact, and call it in or out with a confidence score built from
    the distance to the line and the error margin in centimetres
-2. Marking the bounces on the replay timeline
-3. Port to iPhone
+3. Marking the bounces on the replay timeline
+4. Port to iPhone
