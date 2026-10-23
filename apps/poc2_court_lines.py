@@ -21,10 +21,12 @@ from temoin_cv.capture import FrameRecorder, VideoSource
 from temoin_cv.config import DATA_DIR, config_path, load_config, parse_hsv_ranges
 from temoin_cv.court import (
     CornerSmoother,
+    clip_line_to_frame,
     compute_homography,
     enhance_lines,
+    find_line_candidates,
     find_quad_by_contour,
-    find_quad_by_hough,
+    find_quad_from_candidates,
     image_to_court,
     order_corners,
     warp_top_down,
@@ -40,6 +42,7 @@ from temoin_cv.court_model import (
 from temoin_cv.masking import build_mask, resize_for_processing
 from temoin_cv.visualization import (
     draw_corners,
+    draw_line_candidates,
     draw_court_lines,
     draw_court_marker,
     draw_grid,
@@ -129,6 +132,7 @@ class AppState:
         self.scored: dict[str, float] = {}
         self.reference_names: tuple[str, ...] = ()
         self.orientation = 0
+        self.candidates: list = []
 
 
 def parse_args() -> argparse.Namespace:
@@ -162,32 +166,28 @@ def average_fps(durations: deque[float]) -> float:
 
 def detect_quad(
     mask: np.ndarray, quad_config: dict
-) -> tuple[np.ndarray | None, str]:
-    """Find the rectangle, falling back to Hough when the contour will not close.
+) -> tuple[np.ndarray | None, str, list]:
+    """Find the rectangle, and return the candidate lines either way.
 
-    The fallback is what makes worn or taped-over lines usable: a broken edge
-    never closes into a quadrilateral, but it still votes for the right line.
+    The contour route only ever fires on a closed outline. A court is a ladder
+    of separate bands, so the Hough route over the candidate lines is the
+    normal path, not the exception.
     """
     min_area_ratio = float(quad_config["min_area_ratio"])
     min_support = float(quad_config.get("min_support", 0.0))
+    candidates = find_line_candidates(mask, quad_config["hough"])
 
-    if str(quad_config["method"]) == "hough":
-        return (
-            find_quad_by_hough(
-                mask, quad_config["hough"], min_area_ratio, min_support
-            ),
-            "hough",
+    if str(quad_config["method"]) == "contour":
+        found = find_quad_by_contour(
+            mask, min_area_ratio, float(quad_config["epsilon_ratio"]), min_support
         )
+        if found is not None:
+            return found, "contour", candidates
 
-    found = find_quad_by_contour(
-        mask, min_area_ratio, float(quad_config["epsilon_ratio"]), min_support
+    found = find_quad_from_candidates(
+        mask, candidates, quad_config["hough"], min_area_ratio, min_support
     )
-    if found is not None:
-        return found, "contour"
-    return (
-        find_quad_by_hough(mask, quad_config["hough"], min_area_ratio, min_support),
-        "hough",
-    )
+    return found, "hough", candidates
 
 
 def on_mouse(event: int, x: int, y: int, _flags: int, state: AppState) -> None:
@@ -242,9 +242,17 @@ def build_hud_lines(
         detail = (
             METHOD_LABELS.get(state.method, state.method)
             if state.corners is not None
-            else "court non trouvé"
+            else "aucun rectangle"
         )
         lines.append(f"ÉTAT {MODE_LABELS[state.mode]}   {detail}")
+
+    if state.mode is Mode.AUTO:
+        across = sum(1 for item in state.candidates if item.horizontal)
+        along = len(state.candidates) - across
+        hint = "" if across >= 2 and along >= 2 else "   il en faut 2 de chaque"
+        lines.append(
+            f"lignes candidates : {across} en travers, {along} en long{hint}"
+        )
 
     if state.scored:
         seen = sum(1 for value in state.scored.values() if value >= good)
@@ -374,7 +382,7 @@ def main() -> int:
                         smoother.reset()
                         print("Calibrage manuel enregistré, coins verrouillés.")
                 elif state.mode is Mode.AUTO:
-                    found, method = detect_quad(mask, quad_config)
+                    found, method, state.candidates = detect_quad(mask, quad_config)
                     if found is not None:
                         # Detection runs downscaled; bring the corners back to
                         # display pixels, which is also what a click gives.
@@ -434,6 +442,26 @@ def main() -> int:
                     Mode.MANUAL: "manual_color",
                     Mode.LOCKED: "locked_color",
                 }[state.mode]
+
+                if state.corners is None and state.candidates:
+                    draw_line_candidates(
+                        frame,
+                        [
+                            (start, end, f"{item.weight:.0f}")
+                            for item, chord in (
+                                (item, clip_line_to_frame(item, mask.shape))
+                                for item in state.candidates
+                            )
+                            if chord is not None
+                            for start, end in [
+                                (
+                                    (chord[0][0] / scale, chord[0][1] / scale),
+                                    (chord[1][0] / scale, chord[1][1] / scale),
+                                )
+                            ]
+                        ],
+                        tuple(view_config["candidate_color"]),
+                    )
 
                 if projected:
                     draw_court_lines(

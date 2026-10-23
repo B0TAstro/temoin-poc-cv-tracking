@@ -205,3 +205,22 @@ def draw_court_lines(
         cv2.line(frame, _clamped(start), _clamped(end), color, thickness, cv2.LINE_AA)
 
     return frame
+
+
+def draw_line_candidates(
+    frame: np.ndarray,
+    chords: Sequence[tuple[tuple[float, float], tuple[float, float], str]],
+    color: Color,
+    thickness: int = 1,
+) -> np.ndarray:
+    """The straight lines the detector found, whether or not they made a court.
+
+    Drawn when no rectangle closes. Without this a failure looks exactly like a
+    blank frame, and three sessions were spent telling the two apart.
+    """
+    for start, end, label in chords:
+        cv2.line(frame, _clamped(start), _clamped(end), color, thickness, cv2.LINE_AA)
+        cv2.putText(
+            frame, label, _clamped(start), FONT, FONT_SCALE * 0.8, color, 1, cv2.LINE_AA
+        )
+    return frame

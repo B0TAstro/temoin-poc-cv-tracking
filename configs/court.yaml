@@ -27,6 +27,13 @@ quad:
     threshold: 30
     min_line_length: 30
     max_line_gap: 40
+    # One band of tape gives two Canny edges plus broken pieces; segments
+    # within this many pixels of the same offset are one line.
+    merge_tolerance: 60
+    # Segments hugging the frame edge are the frame, not the floor.
+    border_margin: 8
+    # Lines kept per angle family, strongest first, before searching the pairs.
+    max_candidates: 4
 
 court:
   length_cm: 2377
@@ -62,3 +69,4 @@ visualization:
   line_good_color: [0, 255, 0]
   line_partial_color: [0, 170, 255]
   line_missing_color: [255, 0, 255]
+  candidate_color: [255, 255, 0]

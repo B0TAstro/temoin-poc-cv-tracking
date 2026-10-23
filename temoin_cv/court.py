@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from typing import Any, Deque, Sequence
+from typing import Any, Deque, NamedTuple, Sequence
 
 import cv2
 import numpy as np
@@ -125,36 +125,69 @@ def _intersect(
     return float(origin_a[0] + t * direction_a[0]), float(origin_a[1] + t * direction_a[1])
 
 
-def _split_at_largest_gap(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Split sorted indices into two groups at their widest gap.
+def _drop_border_segments(
+    segments: np.ndarray, shape: tuple[int, int], margin: float
+) -> np.ndarray:
+    """Remove the segments that merely trace the edge of the frame.
 
-    A deterministic one-dimensional two-means: the two lines of a family sit at
-    two distinct offsets, with the widest gap between them.
+    A band of tape running out of the frame is cut off by it, and that cut is a
+    perfectly straight bright edge. Hough votes for it like any other line, and
+    it then drags the fitted line of a real family away from the tape.
     """
-    order = np.argsort(values)
-    sorted_values = values[order]
-    gaps = np.diff(sorted_values)
-    if len(gaps) == 0:
-        return order, np.array([], dtype=int)
-    cut = int(np.argmax(gaps)) + 1
-    return order[:cut], order[cut:]
+    if margin <= 0:
+        return segments
+    height, width = shape[:2]
+    xs = segments[:, [0, 2]]
+    ys = segments[:, [1, 3]]
+    on_edge = (
+        np.all(xs < margin, axis=1)
+        | np.all(xs > width - margin, axis=1)
+        | np.all(ys < margin, axis=1)
+        | np.all(ys > height - margin, axis=1)
+    )
+    return segments[~on_edge]
 
 
-def find_quad_by_hough(
-    mask: np.ndarray,
-    params: dict[str, Any],
-    min_area_ratio: float = 0.0,
-    min_support: float = 0.0,
-) -> Corners | None:
-    """Fallback detection: four Hough lines, intersected.
+def _cluster_by_offset(offsets: np.ndarray, tolerance: float) -> list[np.ndarray]:
+    """Group segment indices that share the same line, by their offset.
 
-    Used when the lines are broken and the contour never closes into a
-    quadrilateral. Segments are split into a near-horizontal and a
-    near-vertical family, each family into its two lines, and the four
-    intersections give the corners.
+    One band of tape gives two parallel Canny edges plus any number of broken
+    pieces, all at nearly the same offset; two different lines sit further
+    apart than the tape is wide. Splitting wherever the sorted offsets jump by
+    more than the tolerance therefore recovers one group per line, however many
+    lines there are — unlike a fixed split into two, which forces a single band
+    to pose as two lines.
     """
+    order = np.argsort(offsets)
+    cuts = np.flatnonzero(np.diff(offsets[order]) > tolerance) + 1
+    return [group for group in np.split(order, cuts) if len(group) > 0]
+
+
+class LineCandidate(NamedTuple):
+    """One fitted line, with the total length of tape backing it."""
+
+    origin: np.ndarray
+    direction: np.ndarray
+    weight: float
+    horizontal: bool
+
+
+def find_line_candidates(
+    mask: np.ndarray, params: dict[str, Any]
+) -> list[LineCandidate]:
+    """Every straight line the mask supports, as fitted candidates.
+
+    This is the honest intermediate result: a court is a network of lines, and
+    which four of them bound the reference rectangle is a separate question,
+    answered by searching the correspondences. Exposing the candidates also
+    makes a failure legible — a frame with three lines on the floor can be told
+    apart from a frame with none.
+    """
+    merge_tolerance = float(params.get("merge_tolerance", 60.0))
+    border_margin = float(params.get("border_margin", 8.0))
+
     edges = cv2.Canny(mask, int(params["canny_low"]), int(params["canny_high"]))
-    segments = cv2.HoughLinesP(
+    found = cv2.HoughLinesP(
         edges,
         rho=1,
         theta=np.pi / 180,
@@ -162,10 +195,15 @@ def find_quad_by_hough(
         minLineLength=int(params["min_line_length"]),
         maxLineGap=int(params["max_line_gap"]),
     )
-    if segments is None or len(segments) < 4:
-        return None
+    if found is None:
+        return []
 
-    segments = segments.reshape(-1, 4).astype(np.float64)
+    segments = _drop_border_segments(
+        found.reshape(-1, 4).astype(np.float64), mask.shape, border_margin
+    )
+    if len(segments) == 0:
+        return []
+
     midpoints = np.stack(
         [(segments[:, 0] + segments[:, 2]) / 2, (segments[:, 1] + segments[:, 3]) / 2],
         axis=1,
@@ -174,46 +212,172 @@ def find_quad_by_hough(
         np.arctan2(segments[:, 3] - segments[:, 1], segments[:, 2] - segments[:, 0])
     )
     horizontal = np.abs((angles + 90) % 180 - 90) < 45
+    lengths = np.hypot(segments[:, 2] - segments[:, 0], segments[:, 3] - segments[:, 1])
 
-    families = []
+    candidates: list[LineCandidate] = []
     for is_horizontal in (True, False):
         selected = np.flatnonzero(horizontal == is_horizontal)
-        if len(selected) < 2:
-            return None
+        if len(selected) == 0:
+            continue
         # Two parallel lines differ along the axis they do not run along.
         offsets = midpoints[selected][:, 1 if is_horizontal else 0]
-        first, second = _split_at_largest_gap(offsets)
-        if len(first) == 0 or len(second) == 0:
-            return None
-        families.append(
-            [
-                _fit_line(
-                    np.concatenate(
-                        [
-                            segments[selected[group]][:, :2],
-                            segments[selected[group]][:, 2:],
-                        ]
-                    )
+        for group in _cluster_by_offset(offsets, merge_tolerance):
+            rows = segments[selected[group]]
+            origin, direction = _fit_line(
+                np.concatenate([rows[:, :2], rows[:, 2:]])
+            )
+            candidates.append(
+                LineCandidate(
+                    origin=origin,
+                    direction=direction,
+                    weight=float(lengths[selected[group]].sum()),
+                    horizontal=bool(is_horizontal),
                 )
-                for group in (first, second)
-            ]
-        )
+            )
 
-    corners = [
-        _intersect(horizontal_line, vertical_line)
-        for horizontal_line in families[0]
-        for vertical_line in families[1]
+    candidates.sort(key=lambda candidate: candidate.weight, reverse=True)
+    return candidates
+
+
+def _line_separation(first: LineCandidate, second: LineCandidate) -> float:
+    """Perpendicular distance between two nearly parallel fitted lines."""
+    normal = np.array([-first.direction[1], first.direction[0]])
+    return abs(float(np.dot(second.origin - first.origin, normal)))
+
+
+def _within_frame(point: tuple[float, float], shape: tuple[int, int]) -> bool:
+    """Is the intersection anywhere near the picture, or off at infinity?"""
+    height, width = shape[:2]
+    return (
+        -width <= point[0] <= 2 * width and -height <= point[1] <= 2 * height
+    )
+
+
+def find_quad_from_candidates(
+    mask: np.ndarray,
+    candidates: Sequence[LineCandidate],
+    params: dict[str, Any],
+    min_area_ratio: float = 0.0,
+    min_support: float = 0.0,
+) -> Corners | None:
+    """The best-supported rectangle among already-detected candidate lines.
+
+    Two lines are taken from each angle family and the mask decides which two,
+    because four lines can always be intersected into a quadrilateral but only
+    the real ones have tape underneath. Taking the candidates as an argument
+    lets the caller draw them, which is the difference between "nothing is
+    detected" and "only one crossing line exists, so no rectangle can close".
+    """
+    max_candidates = int(params.get("max_candidates", 4))
+    merge_tolerance = float(params.get("merge_tolerance", 60.0))
+    families = [
+        [item for item in candidates if item.horizontal == is_horizontal][
+            :max_candidates
+        ]
+        for is_horizontal in (True, False)
     ]
-    if any(corner is None for corner in corners):
+    if any(len(family) < 2 for family in families):
         return None
 
-    ordered = order_corners(corners)
-    area = float(cv2.contourArea(ordered.reshape(-1, 1, 2)))
-    if area < min_area_ratio * mask.shape[0] * mask.shape[1]:
+    # Dilate once rather than inside every scoring call: the search below asks
+    # the same question of the same mask a few hundred times.
+    tolerance = 3
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * tolerance + 1, 2 * tolerance + 1)
+    )
+    dilated = cv2.dilate(mask, kernel)
+    minimum_area = min_area_ratio * mask.shape[0] * mask.shape[1]
+
+    best: Corners | None = None
+    best_support = min_support
+
+    for first_h in range(len(families[0])):
+        for second_h in range(first_h + 1, len(families[0])):
+            # Two lines closer together than the tape is wide are the two edges
+            # of one band, and the sliver between them scores a perfect support
+            # while meaning nothing. Same threshold as the merge: it is the
+            # width of the widest band.
+            if (
+                _line_separation(families[0][first_h], families[0][second_h])
+                <= merge_tolerance
+            ):
+                continue
+            for first_v in range(len(families[1])):
+                for second_v in range(first_v + 1, len(families[1])):
+                    if (
+                        _line_separation(
+                            families[1][first_v], families[1][second_v]
+                        )
+                        <= merge_tolerance
+                    ):
+                        continue
+                    corners = [
+                        _intersect(
+                            (families[0][h].origin, families[0][h].direction),
+                            (families[1][v].origin, families[1][v].direction),
+                        )
+                        for h in (first_h, second_h)
+                        for v in (first_v, second_v)
+                    ]
+                    if any(corner is None for corner in corners):
+                        continue
+                    if not all(_within_frame(corner, mask.shape) for corner in corners):
+                        continue
+                    ordered = order_corners(corners)
+                    area = float(cv2.contourArea(ordered.reshape(-1, 1, 2)))
+                    if area < minimum_area:
+                        continue
+                    support = quad_support(dilated, ordered, tolerance=0)
+                    if support > best_support:
+                        best, best_support = ordered, support
+
+    return best
+
+
+def find_quad_by_hough(
+    mask: np.ndarray,
+    params: dict[str, Any],
+    min_area_ratio: float = 0.0,
+    min_support: float = 0.0,
+) -> Corners | None:
+    """Fallback detection: candidate lines, then the best-supported rectangle.
+
+    Used when the lines are broken or open, which is the normal case: a court
+    is a ladder of separate bands, never a closed outline, so no contour ever
+    traces it.
+    """
+    return find_quad_from_candidates(
+        mask,
+        find_line_candidates(mask, params),
+        params,
+        min_area_ratio,
+        min_support,
+    )
+
+
+def clip_line_to_frame(
+    candidate: LineCandidate, shape: tuple[int, int]
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """The chord a fitted line cuts across the frame, for drawing it."""
+    height, width = shape[:2]
+    origin, direction = candidate.origin, candidate.direction
+    distances: list[float] = []
+    for axis, limit in ((0, width - 1), (1, height - 1)):
+        if abs(direction[axis]) < MIN_DENOMINATOR:
+            continue
+        for bound in (0.0, float(limit)):
+            distances.append((bound - origin[axis]) / direction[axis])
+    inside = []
+    for distance in distances:
+        point = origin + distance * direction
+        if -1 <= point[0] <= width and -1 <= point[1] <= height:
+            inside.append((float(point[0]), float(point[1])))
+    if len(inside) < 2:
         return None
-    if quad_support(mask, ordered) < min_support:
-        return None
-    return ordered
+    first, last = inside[0], max(
+        inside, key=lambda point: (point[0] - inside[0][0]) ** 2 + (point[1] - inside[0][1]) ** 2
+    )
+    return first, last
 
 
 def segment_support(

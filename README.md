@@ -100,8 +100,8 @@ python -m apps.poc2_court_lines --source data/samples/court.mov
 ### What is displayed
 
 - **every line of the court**, projected from the model and coloured by how much
-  of it the mask actually backs: green confirmed, orange partial, grey claimed
-  but unconfirmed
+  of it the mask actually backs: green confirmed, orange partial, magenta
+  claimed but unconfirmed
 - the four reference points, numbered in the order they are configured
 - a second window with the rectified **top-down view** and a grid every 10 cm
 - clicking the image prints the point's real position in centimetres and marks
@@ -196,7 +196,11 @@ is the only honest check.
    it from there. The slider shows the width being kept, and raising it costs
    nothing — the walls go at every size.
 4. Save with `s`, then run `python -m apps.poc2_court_lines`.
-5. If the court is not found, press `c` and click the four reference points.
+5. If no rectangle closes, the banner says how many candidate lines were found
+   each way and those lines are drawn over the frame. **Four points need two
+   lines across and two along**: with a single crossing band the geometry is
+   short of a rectangle, whatever the image quality. Tape a second crossing, or
+   press `c` and click the four reference points.
 6. Click a point whose real position you measured, and check the reading. If it
    is mirrored, press `o`.
 
@@ -314,13 +318,16 @@ a low saturation ceiling and a high value floor.
 | `quad.min_area_ratio` | smallest acceptable rectangle, as a share of the frame area |
 | `quad.epsilon_ratio` | `approxPolyDP` tolerance, as a share of the contour perimeter |
 | `quad.min_support` | share of each edge that must actually lie on mask pixels. The weakest edge decides, which is what stops four unrelated lines being reported as a court. |
-| `quad.hough` | `Canny` thresholds and `HoughLinesP` parameters for the fallback. Deliberately permissive: its job is to work on degraded lines. |
+| `quad.hough` | `Canny` thresholds and `HoughLinesP` parameters. Deliberately permissive: its job is to work on degraded lines. |
+| `quad.hough.merge_tolerance` | pixels within which two candidate lines are one. **Set it above the widest band and below the gap between two different lines.** A band of tape reaches Canny as its two edges, and below this threshold they pose as two lines whose sliver scores a perfect support while sitting a third of the frame from the truth. |
+| `quad.hough.border_margin` | segments hugging the frame edge this closely are dropped: a band running out of frame is cut by it, and that cut is a straight bright edge Hough votes for. |
+| `quad.hough.max_candidates` | lines kept per angle family, strongest first, before the pairs are searched. Four each way is 36 rectangles to score, which is nothing. |
 | `court.length_cm`, `court.doubles_width_cm`, `court.singles_width_cm`, `court.service_line_from_net_cm` | the four measurements the whole model is derived from. Defaults are the full-size ITF dimensions. |
 | `court.scale` | `1` for a real court; `0.15` for a scaled copy taped on a floor. Applies to every dimension at once. |
 | `court.reference_points` | which four model points are matched to the detected or clicked corners, **clockwise from the one nearest the top-left of the image**. See the symmetry trap. |
 | `court.px_per_cm` | resolution of the top-down view |
 | `court.grid_step_cm` | spacing of the grid drawn on the top-down view |
-| `scoring.good`, `scoring.partial` | thresholds that colour a line green, orange or grey, and decide what counts as a confirmed line |
+| `scoring.good`, `scoring.partial` | thresholds that colour a line green, orange or magenta, and decide what counts as a confirmed line |
 | `smoothing.corner_window` | frames the corners are averaged over, and the window the stability figure is computed on |
 
 The model's point names, usable in `reference_points`: `doubles_near_left`,

@@ -16,6 +16,8 @@ from temoin_cv.court import (
     court_corners_cm,
     court_to_image,
     enhance_lines,
+    clip_line_to_frame,
+    find_line_candidates,
     find_quad_by_contour,
     find_quad_by_hough,
     image_to_court,
@@ -295,3 +297,104 @@ def test_the_support_gate_rejects_a_quad_the_mask_does_not_back():
     assert quad_support(mask, unguarded) < 0.5  # part tape, part wall
 
     assert find_quad_by_hough(mask, HOUGH_PARAMS, 0.02, min_support=0.6) is None
+
+
+# -- a ladder of tape, which is what a court actually is -----------------------
+
+# Two long bands running past two crossing bands: nothing closes, so no contour
+# traces it. The crossings sit at a fifth and four fifths along the long bands.
+LADDER_LEFT = ((240.0, 120.0), (80.0, 400.0))
+LADDER_RIGHT = ((400.0, 120.0), (560.0, 400.0))
+
+
+def _along(band, t):
+    (x0, y0), (x1, y1) = band
+    return (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+
+
+LADDER_CORNERS = [
+    _along(LADDER_LEFT, 0.2),
+    _along(LADDER_RIGHT, 0.2),
+    _along(LADDER_RIGHT, 0.8),
+    _along(LADDER_LEFT, 0.8),
+]
+
+
+def ladder_mask(crossings: int = 2, thickness: int = 8) -> np.ndarray:
+    """Two sidelines plus `crossings` crossing bands, as the mask sees them."""
+    mask = np.zeros((480, 640), dtype=np.uint8)
+    for band in (LADDER_LEFT, LADDER_RIGHT):
+        cv2.line(
+            mask,
+            tuple(int(v) for v in band[0]),
+            tuple(int(v) for v in band[1]),
+            255,
+            thickness,
+        )
+    for index in range(crossings):
+        t = 0.8 if index == 0 else 0.2
+        cv2.line(
+            mask,
+            tuple(int(v) for v in _along(LADDER_LEFT, t)),
+            tuple(int(v) for v in _along(LADDER_RIGHT, t)),
+            255,
+            thickness,
+        )
+    return mask
+
+
+def test_a_ladder_of_tape_is_found_although_no_contour_closes():
+    """The real shape of a court: open bands, never a closed outline."""
+    mask = ladder_mask()
+    assert find_quad_by_contour(mask, 0.02, 0.02) is None
+
+    found = find_quad_by_hough(mask, HOUGH_PARAMS, min_area_ratio=0.02)
+    assert found is not None
+    assert found == pytest.approx(np.array(order_corners(LADDER_CORNERS)), abs=8.0)
+
+
+def test_one_crossing_band_cannot_close_a_rectangle():
+    """Four points need two lines each way. One crossing is not enough, and
+    saying so beats inventing the sliver between that band's two edges."""
+    mask = ladder_mask(crossings=1)
+    across = [item for item in find_line_candidates(mask, HOUGH_PARAMS) if item.horizontal]
+    assert len(across) == 1
+    assert find_quad_by_hough(mask, HOUGH_PARAMS, min_area_ratio=0.02) is None
+
+
+def test_the_two_edges_of_one_band_are_one_line():
+    """A band of tape is one line, not the pair of its Canny edges.
+
+    Treating the edges as two lines makes the sliver between them a perfect
+    rectangle: support 1.00, and corners a third of the frame away from the
+    truth.
+    """
+    mask = np.zeros((480, 640), dtype=np.uint8)
+    cv2.line(mask, (60, 240), (580, 240), 255, 30)
+
+    candidates = find_line_candidates(mask, HOUGH_PARAMS)
+    assert len(candidates) == 1
+    assert candidates[0].horizontal
+    assert candidates[0].origin[1] == pytest.approx(240.0, abs=3.0)
+
+
+def test_segments_tracing_the_frame_edge_are_dropped():
+    """A band running out of frame is cut by it, and the cut is a bright
+    straight edge that Hough votes for like any other line."""
+    mask = ladder_mask()
+    mask[:, :6] = 255  # the frame's own left edge, lit
+
+    candidates = find_line_candidates(mask, HOUGH_PARAMS)
+    assert all(
+        min(item.origin[0], abs(item.origin[0] - mask.shape[1])) > 10
+        or item.horizontal
+        for item in candidates
+    )
+
+
+def test_clip_line_to_frame_spans_the_picture():
+    candidate = find_line_candidates(ladder_mask(), HOUGH_PARAMS)[0]
+    chord = clip_line_to_frame(candidate, (480, 640))
+    assert chord is not None
+    start, end = chord
+    assert np.hypot(end[0] - start[0], end[1] - start[1]) > 100

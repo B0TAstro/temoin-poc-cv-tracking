@@ -113,6 +113,26 @@ These were measured, not assumed. Do not undo them.
 - **An overlay colour must not match the floor.** The unconfirmed lines were
   drawn in grey 120 on a grey concrete floor, which reads as "nothing is
   displayed" rather than "this line is not confirmed".
+- **A court never closes into a contour.** It is a ladder of separate bands, so
+  `find_quad_by_contour` fires only on the rare closed outline. The normal path
+  is `find_line_candidates` then `find_quad_from_candidates`, which searches the
+  pairs of candidate lines and keeps the best-supported rectangle.
+- **The two edges of one band are not two lines.** Canny sees a strip of tape as
+  its two borders; merging candidates whose offsets differ by less than
+  `merge_tolerance` turns them back into the one line they are. Set the
+  tolerance above the widest band: below it, the sliver between a band's own
+  edges wins the search with a perfect support of 1.00 and corners 250 to 400 px
+  from the truth. A separation gate on the chosen pair uses the same threshold,
+  because maximising mask support alone rewards exactly that degenerate answer.
+- **Segments tracing the frame edge are the frame, not the floor.** A band
+  running out of frame is cut by it, and the cut is a straight bright edge that
+  votes like any other line and drags a fitted family off the tape.
+- **Four points need two lines each way.** One crossing band is geometrically
+  short of a rectangle, whatever the image quality. Say so — the banner reports
+  the candidate count per family — rather than returning something.
+- **A failure must draw what it found.** Three sessions were spent unable to
+  tell "nothing detected" from "nothing displayed". When no rectangle closes,
+  the candidate lines are drawn over the frame.
 - **A quadrilateral must be backed by the mask.** Four lines can always be
   intersected into one, so shape alone will report a door frame crossed with a
   skirting board. `quad_support` checks each edge and the weakest decides.
