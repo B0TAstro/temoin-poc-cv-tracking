@@ -24,6 +24,7 @@ import numpy as np
 from temoin_cv.ball_detection import find_candidates
 from temoin_cv.capture import VideoSource
 from temoin_cv.config import config_path, load_config, save_config
+from temoin_cv.court import enhance_lines
 from temoin_cv.masking import build_mask, resize_for_processing
 from temoin_cv.visualization import draw_hud, mask_to_bgr
 
@@ -55,6 +56,7 @@ SLIDERS = (
     Slider("blur", "flou", 31),
     Slider("open", "ouverture", 31),
     Slider("close", "fermeture", 31),
+    Slider("tophat", "top-hat (0 = off)", 201),
     Slider("min_area", "surface min", 5000),
     Slider("max_area", "surface max /1k", 500),
     Slider("min_circularity", "circularite x100", 100),
@@ -94,6 +96,7 @@ def initial_values(config: dict) -> dict[str, int]:
         "blur": int(detection["blur_ksize"]),
         "open": int(detection["open_ksize"]),
         "close": int(detection["close_ksize"]),
+        "tophat": int(detection.get("tophat_ksize", 0)),
         "min_area": int(detection.get("min_area", BALL_DEFAULTS["min_area"])),
         "max_area": int(detection.get("max_area", BALL_DEFAULTS["max_area"]))
         // AREA_STEP,
@@ -141,6 +144,8 @@ def apply_to_config(config: dict, values: dict[str, int]) -> None:
     detection["blur_ksize"] = values["blur"]
     detection["open_ksize"] = values["open"]
     detection["close_ksize"] = values["close"]
+    if "tophat_ksize" in detection:
+        detection["tophat_ksize"] = values["tophat"]
     # Only write the ball filters back into a config that already had them, so
     # tuning the court's white does not sprinkle meaningless keys into it.
     if all(key in detection for key in BALL_KEYS):
@@ -193,6 +198,10 @@ def main() -> int:
             mask = build_mask(
                 small, [hsv_bounds(values)], values["blur"], values["open"], values["close"]
             )
+            # The app applies this too. Leaving it out of the calibrator means
+            # tuning a mask the app never sees — and a top-hat whose kernel is
+            # narrower than the taped line erases the line completely.
+            mask = enhance_lines(mask, values["tophat"])
             candidates = find_candidates(
                 mask,
                 float(values["min_area"]),
@@ -204,6 +213,9 @@ def main() -> int:
             lines = [
                 f"blanc retenu {coverage:5.1f} %"
                 f"   plus grande forme {largest_shape_area(mask):7.0f} px²",
+                f"largeur de trait max gardee ~{max(1, values['tophat'])} px"
+                if values["tophat"] > 1
+                else "top-hat desactive : les murs blancs passeront",
             ]
             if tunes_ball:
                 lines.append(f"{len(candidates)} candidat(s) balle")

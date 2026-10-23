@@ -186,6 +186,15 @@ is the only honest check.
    only what is smaller and brighter than its surroundings, which a wall never
    is and a strip of tape always is. On one real room it took the mask from 59%
    of the frame down to 4%.
+
+   **Size the kernel above the widest line, and watch the mask while you do.**
+   The kernel is an upper bound on the width it keeps, so a kernel narrower than
+   the tape erases the tape — silently, and completely. Against paper strips
+   47 px wide in the processing frame, a kernel of 21 took the mask to 0.1% of
+   the frame and confirmed zero lines out of ten; a kernel of 81 restored it to
+   9.9%. Perspective makes a line widest at the near edge of the frame, so size
+   it from there. The slider shows the width being kept, and raising it costs
+   nothing — the walls go at every size.
 4. Save with `s`, then run `python -m apps.poc2_court_lines`.
 5. If the court is not found, press `c` and click the four reference points.
 6. Click a point whose real position you measured, and check the reading. If it
@@ -219,6 +228,12 @@ will do, not as a measurement of it.
 
 ## Known limitations
 
+- **A low score does not mean a failure.** It means the model asserts lines the
+  image does not confirm, and a court taped with two sidelines and one crossing
+  band genuinely has only three of the model's ten lines on the floor. Three out
+  of ten is then the correct answer. What POC 2 is actually asking is whether a
+  clicked point reads the right centimetres, and that depends on the four
+  reference points, not on the score.
 - **The court's symmetry cannot be resolved from the image.** Four corner
   assignments map the court onto itself; all of them score 1.00 and only one
   gives the right coordinates. See the symmetry trap above. This is a property

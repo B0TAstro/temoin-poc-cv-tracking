@@ -14,7 +14,7 @@ detection:
   hsv_ranges:
   - lower: [0, 0, 180]
     upper: [179, 60, 255]
-  tophat_ksize: 21
+  tophat_ksize: 81
 
 quad:
   method: contour
@@ -61,4 +61,4 @@ visualization:
   hud_color: [255, 255, 255]
   line_good_color: [0, 255, 0]
   line_partial_color: [0, 170, 255]
-  line_missing_color: [120, 120, 120]
+  line_missing_color: [255, 0, 255]

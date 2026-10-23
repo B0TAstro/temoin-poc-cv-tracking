@@ -99,6 +99,20 @@ These were measured, not assumed. Do not undo them.
   The top-hat in `enhance_lines` takes that to 4% and must stay enabled: it
   keeps only what is smaller and brighter than its surroundings, which a wall
   never is.
+- **The top-hat kernel must be WIDER than the widest line, or it erases it.**
+  That is the same property seen from the other side, and it fails silently: a
+  kernel of 21 against paper strips 47 px wide in the processing frame took a
+  real mask down to 0.1% of the frame and scored 0 lines out of 10. The kernel
+  is an upper bound on the line width kept, so size it from the widest line at
+  the near edge of the frame, where perspective makes it widest, and leave
+  margin. Raising it costs nothing: the walls are removed at every size tested.
+- **The calibration tool must apply every step the app applies.** It tuned the
+  colour mask without the top-hat for a while, so the view used to choose the
+  thresholds was not the mask the app computed — and the step being tuned
+  around was the one erasing the lines.
+- **An overlay colour must not match the floor.** The unconfirmed lines were
+  drawn in grey 120 on a grey concrete floor, which reads as "nothing is
+  displayed" rather than "this line is not confirmed".
 - **A quadrilateral must be backed by the mask.** Four lines can always be
   intersected into one, so shape alone will report a door frame crossed with a
   skirting board. `quad_support` checks each edge and the weakest decides.
